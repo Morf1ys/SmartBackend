@@ -1,22 +1,27 @@
-require("dotenv").config(); // Завантажуємо змінні з .env файлу
+require("dotenv").config();
 const axios = require("axios");
 const xml2js = require("xml2js");
 const mongoose = require("mongoose");
 const Product = require("./models/Product");
+const cron = require("node-cron");
 
 mongoose
-  .connect(process.env.MONGODB_URI)
+  .connect(process.env.MONGODB_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
   .then(() => {
     console.log("Connected to MongoDB");
-    return importProducts();
-  })
-  .then(() => {
-    console.log("Closing MongoDB connection");
-    return mongoose.connection.close();
+    // Запускаємо імпорт одразу після запуску
+    importProducts();
+    // Налаштовуємо виконання імпорту кожні 2 години
+    cron.schedule("0 */2 * * *", () => {
+      console.log("Starting product import...");
+      importProducts();
+    });
   })
   .catch((error) => {
-    console.error("Error connecting to MongoDB or during import:", error);
-    process.exit(1);
+    console.error("Error connecting to MongoDB:", error);
   });
 
 async function importProducts() {
@@ -49,25 +54,28 @@ async function importProducts() {
           const params = {};
           if (offer.param) {
             offer.param.forEach((param) => {
-              const sanitizedKey = param.$.name.replace(/\./g, "_"); // Замінюємо крапки на підкреслення
+              const sanitizedKey = param.$.name.replace(/\./g, "_");
               params[sanitizedKey] = param._;
             });
           }
 
+          const originalPrice = parseFloat(offer.price[0]);
+          const discountedPrice = Math.round(originalPrice * 0.86);
+
           const productData = {
             name: offer.name[0],
-            price: offer.price[0],
+            price: discountedPrice,
             priceOld: offer.price_old ? offer.price_old[0] : null,
             currencyId: offer.currencyId ? offer.currencyId[0] : null,
             description: offer.description ? offer.description[0] : "",
-            imageUrl: offer.picture, // Зберігаємо всі зображення в масиві
+            imageUrl: offer.picture,
             category: categoryName,
             vendor: offer.vendor ? offer.vendor[0] : null,
             delivery: offer.delivery ? offer.delivery[0] === "true" : false,
             stockQuantity: offer.stock_quantity
               ? parseInt(offer.stock_quantity[0], 10)
               : 0,
-            params: params, // Додаткові параметри з "чистими" ключами
+            params: params,
           };
 
           const existingProduct = await Product.findOne({
@@ -90,6 +98,6 @@ async function importProducts() {
     });
   } catch (error) {
     console.error("Error fetching data:", error);
-    throw error; // Передаємо помилку далі
+    throw error;
   }
 }

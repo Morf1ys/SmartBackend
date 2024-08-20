@@ -1,26 +1,22 @@
 require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
-const cors = require("cors"); // Додаємо CORS
+const cors = require("cors");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Включення CORS з базовими налаштуваннями
 app.use(cors());
 
-// Підключення до бази даних MongoDB
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 });
 
-// Простий маршрут для перевірки роботи сервера
 app.get("/", (req, res) => {
   res.send("Server is running");
 });
 
-// Імпорт моделі Product
 const Product = require("./src/models/Product");
 
 // Маршрут для отримання списку товарів у форматі XML або JSON
@@ -28,7 +24,6 @@ app.get("/product-feed", async (req, res) => {
   try {
     const products = await Product.find();
 
-    // Перевіряємо заголовок запиту, щоб визначити формат відповіді
     const acceptHeader = req.headers.accept;
 
     if (acceptHeader && acceptHeader.includes("application/json")) {
