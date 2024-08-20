@@ -9,11 +9,34 @@ const productSchema = new mongoose.Schema({
     type: Number,
     required: true,
   },
+  priceOld: {
+    type: Number,
+  },
+  currencyId: {
+    type: String,
+  },
   description: {
     type: String,
   },
   imageUrl: {
+    type: [String], // Змінюємо поле на масив
+  },
+  category: {
     type: String,
+    required: true,
+  },
+  vendor: {
+    type: String,
+  },
+  delivery: {
+    type: Boolean,
+  },
+  stockQuantity: {
+    type: Number,
+  },
+  params: {
+    type: Map,
+    of: String,
   },
   createdAt: {
     type: Date,
