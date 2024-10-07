@@ -19,7 +19,7 @@ const productSchema = new mongoose.Schema({
     type: String,
   },
   imageUrl: {
-    type: [String], // Змінюємо поле на масив
+    type: [String],
   },
   category: {
     type: String,
