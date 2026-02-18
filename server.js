@@ -54,6 +54,18 @@ app.get("/product-feed", async (req, res) => {
     res.status(500).send("Error generating feed");
   }
 });
+// Додаємо новий маршрут для отримання категорій з підкатегоріями
+const Category = require("./src/models/Category");
+
+app.get("/categories", async (req, res) => {
+  try {
+    const categories = await Category.find();
+    res.json({ categories });
+  } catch (error) {
+    console.error("Error fetching categories:", error);
+    res.status(500).send("Error fetching categories");
+  }
+});
 
 // Запуск сервера
 app.listen(PORT, () => {

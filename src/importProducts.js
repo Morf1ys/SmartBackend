@@ -3,31 +3,22 @@ const axios = require("axios");
 const xml2js = require("xml2js");
 const mongoose = require("mongoose");
 const Product = require("./models/Product");
-const cron = require("node-cron");
+const Category = require("./models/Category");
+const FailedProduct = require("./models/FailedProduct");
+const categoryMap = require("./categoryMap");
 
 mongoose
   .connect(process.env.MONGODB_URI, {
     useNewUrlParser: true,
     useUnifiedTopology: true,
   })
-  .then(() => {
-    console.log("Connected to MongoDB");
-    // Запускаємо імпорт одразу після запуску
-    importProducts();
-    // Налаштовуємо виконання імпорту кожні 2 години
-    cron.schedule("0 */2 * * *", () => {
-      console.log("Starting product import...");
-      importProducts();
-    });
-  })
-  .catch((error) => {
-    console.error("Error connecting to MongoDB:", error);
-  });
+  .then(() => console.log("Connected to MongoDB"))
+  .catch((error) => console.error("Error connecting to MongoDB:", error));
 
 async function importProducts() {
   try {
     const response = await axios.get(
-      "https://vingoods.com.ua/index.php?route=extension/feed/yandex_yml&token=vingoodscomuarozetka"
+      "https://vingoods.prom.ua/products_feed.xml?hash_tag=304a1e9350e8e010372f52315c1b2fa5&sales_notes=&product_ids=&label_ids=&exclude_fields=&html_description=0&yandex_cpa=&process_presence_sure=&languages=uk%2Cru&extra_fields=quantityInStock%2Ckeywords&group_ids="
     );
     const data = response.data;
 
@@ -39,61 +30,73 @@ async function importProducts() {
         }
 
         const offers = result.yml_catalog.shop[0].offers[0].offer;
-        const categories = result.yml_catalog.shop[0].categories[0].category;
+        let successfulCount = 0;
+        let failedCount = 0;
+        let inStockCount = 0;
 
-        const categoryMap = {};
-        categories.forEach((category) => {
-          categoryMap[category.$.id] = category._;
-        });
+        for (let offer of offers) {
+          const externalCategoryId = offer.categoryId[0];
+          const matchedCategoryId = categoryMap[externalCategoryId];
 
-        for (let i = 0; i < offers.length; i++) {
-          const offer = offers[i];
-          const categoryId = offer.categoryId[0];
-          const categoryName = categoryMap[categoryId] || "Uncategorized";
-
-          const params = {};
-          if (offer.param) {
-            offer.param.forEach((param) => {
-              const sanitizedKey = param.$.name.replace(/\./g, "_");
-              params[sanitizedKey] = param._;
-            });
-          }
-
-          const originalPrice = parseFloat(offer.price[0]);
-          const discountedPrice = Math.round(originalPrice * 0.86);
+          // Зменшуємо ціну на 10% та округлюємо її до цілого числа
+          const discountedPrice = Math.round(parseFloat(offer.price[0]) * 0.9);
+          const oldPrice = offer.oldprice
+            ? parseFloat(offer.oldprice[0])
+            : null;
 
           const productData = {
             name: offer.name[0],
             price: discountedPrice,
-            priceOld: offer.price_old ? offer.price_old[0] : null,
-            currencyId: offer.currencyId ? offer.currencyId[0] : null,
+            priceOld: oldPrice,
+            currencyId: offer.currencyId ? offer.currencyId[0] : "UAH",
             description: offer.description ? offer.description[0] : "",
+            category: matchedCategoryId,
             imageUrl: offer.picture,
-            category: categoryName,
             vendor: offer.vendor ? offer.vendor[0] : null,
-            delivery: offer.delivery ? offer.delivery[0] === "true" : false,
-            stockQuantity: offer.stock_quantity
-              ? parseInt(offer.stock_quantity[0], 10)
-              : 0,
-            params: params,
+            stockQuantity: parseInt(offer.quantity_in_stock[0], 10) || 0,
+            params: offer.param?.reduce((acc, param) => {
+              const sanitizedKey = param.$.name.replace(/\./g, "_");
+              acc[sanitizedKey] = param._;
+              return acc;
+            }, {}),
           };
 
-          const existingProduct = await Product.findOne({
-            name: productData.name,
-          });
-
-          if (existingProduct) {
-            await Product.updateOne({ _id: existingProduct._id }, productData);
-            console.log(`Product ${productData.name} updated in the database`);
+          if (matchedCategoryId) {
+            await Product.findOneAndUpdate(
+              { name: productData.name },
+              productData,
+              { upsert: true, new: true }
+            );
+            successfulCount++;
+            if (productData.stockQuantity > 0) {
+              inStockCount++;
+            }
           } else {
-            const newProduct = new Product(productData);
-            await newProduct.save();
-            console.log(`Product ${productData.name} added to the database`);
+            // Перевірка, чи товар вже існує в Products
+            const existingProduct = await Product.findOne({
+              name: productData.name,
+            });
+            if (!existingProduct) {
+              // Якщо категорія не знайдена і товару немає в Products, зберігаємо товар в FailedProducts
+              await FailedProduct.create({
+                ...productData,
+                category: externalCategoryId,
+                error: `Category ID ${externalCategoryId} not found`,
+              });
+              failedCount++;
+            } else {
+              console.log(
+                `Товар "${productData.name}" вже існує в Products і буде пропущений.`
+              );
+            }
           }
         }
 
-        console.log("Import completed successfully");
-        resolve(); // Розв'язуємо проміс після завершення імпорту
+        console.log(`Імпорт успішно завершено`);
+        console.log(`Успішно імпортовано товарів: ${successfulCount}`);
+        console.log(`Неуспішно імпортовано товарів: ${failedCount}`);
+        console.log(`Товарів в наявності: ${inStockCount}`);
+        resolve();
       });
     });
   } catch (error) {
@@ -101,3 +104,5 @@ async function importProducts() {
     throw error;
   }
 }
+
+importProducts().then(() => mongoose.connection.close());
